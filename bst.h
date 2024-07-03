@@ -10,7 +10,7 @@ struct node {
 	struct node* right;
 	int height;
 	int count;
-    int frequency;
+    float frequency;
 };
 
 // A utility function to get maximum of two integers
@@ -32,7 +32,7 @@ int max(int a, int b)
 
 /* Helper function that allocates a new node with the given key and
 	NULL left and right pointers. */
-struct node* newNode(float value, int freq)
+struct node* newNode(float value, float freq)
 {
 	struct node* node = (struct node*)
 		malloc(sizeof(struct node));
@@ -45,7 +45,7 @@ struct node* newNode(float value, int freq)
     if (freq)
         node->frequency = freq;
     else
-        node->frequency = 0;
+        node->frequency = 0.0;
 	return (node);
 }
 
@@ -95,7 +95,7 @@ int getBalance(struct node* N)
 	return height(N->left) - height(N->right);
 }
 
-struct node* insert(struct node* node, float value, int freq)
+struct node* insert(struct node* node, float value, float freq)
 {
 	/* 1. Perform the normal BST rotation */
 	if (node == NULL)
@@ -164,36 +164,46 @@ struct node* minValueNode(struct node* node)
 	return current;
 }
 
-struct node* deleteNode(struct node* root, float value)
+struct node* deleteNode(struct node* root, float value, float freq)
 {
 	// STEP 1: PERFORM STANDARD BST DELETE
-
 	if (root == NULL)
 		return root;
 	// If the value to be deleted is smaller than the root's value,
 	// then it lies in left subtree
 	if (value < root->value)
     {
-        // cout << "calling delete from value < root->value" << endl;
-		root->left = deleteNode(root->left, value);
+         //cout << "calling delete from value < root->value" << endl;
+		root->left = deleteNode(root->left, value, freq);
     }
 
 	// If the value to be deleted is greater than the root's value,
 	// then it lies in right subtree
 	else if (value > root->value)
     {
-        // cout << "calling delete from value > root->value" << endl;
-		root->right = deleteNode(root->right, value);
+         //cout << "calling delete from value > root->value" << endl;
+		root->right = deleteNode(root->right, value, freq);
     }
 	else {
 		// If key is present more than once, simply decrement
 		// count and return
-        // cout << "id = " << root->value << endl;
+		/*
+         cout << "id = " << root->value << endl;
+		 if(root->right !=NULL){
+			cout<<"right "<<root->right->value<<endl;
+		 }
+		 if(root->left !=NULL){
+			cout<<"left "<<root->left->value<<endl;
+		 }*/
+		 //ystart deletion
+		 //root->frequency-=freq
+		 /*
+		if (root->frequency-freq > 0.0)*/
+                root->frequency-=freq;
+
 		if (root->count > 1) {
 			(root->count)--;
-
-            if (root->frequency > root->count)
-                root->frequency--;
+			
             if (root->count > 0)
                 return root;
             else
@@ -227,7 +237,7 @@ struct node* deleteNode(struct node* root, float value)
 			temp->count = 1;
 
 			// Delete the inorder successor
-			root->right = deleteNode(root->right, temp->value);
+			root->right = deleteNode(root->right, temp->value,0.0);
 		}
 	}
 
@@ -408,7 +418,7 @@ void printInorder(struct node* node)
     printInorder(node->left);
  
     /* then print the data of node */
-    printf("[%f,%d,%d] ", node->value, node->count, node->frequency);
+    printf("[%f,%d,%f] ", node->value, node->count, node->frequency);
  
     /* now recur on right child */
     printInorder(node->right);

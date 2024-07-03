@@ -24,7 +24,6 @@ typedef struct Triple {
 } Triple;
 
 
-
 typedef struct Quad {
 	float value;
 	int id;
@@ -37,18 +36,21 @@ struct Rect
 {
   Rect()  {}
 
-  Rect(float a_minX, float a_minY, float a_maxX, float a_maxY)
+  Rect(float a_minX, float a_minY, float a_maxX, float a_maxY, float a_weight)
   {
     min[0] = a_minX;
     min[1] = a_minY;
 
     max[0] = a_maxX;
     max[1] = a_maxY;
+
+    weight = a_weight;
   }
 
 
   float min[2];
   float max[2];
+  float weight;
 };
 
 bool compareRegion(Region i1, Region i2)
@@ -102,7 +104,7 @@ struct node *updateDStructure(struct node *D, struct Triple triple, Region *user
 	if(triple.type == 1)			// START
 	{
 		struct node *e = findMaxforN(D,userRegions[triple.id].yStart);
-		D = insert(D,userRegions[triple.id].yStart,e->frequency+1);
+		D = insert(D,userRegions[triple.id].yStart,e->frequency+userRegions[triple.id].weight);
 		if (e->value < userRegions[triple.id].yStart)
         {
             e = findSuccessor(D,e);
@@ -112,12 +114,21 @@ struct node *updateDStructure(struct node *D, struct Triple triple, Region *user
 		
 		while(next != NULL && next->value < userRegions[triple.id].yEnd)
 		{
-			next->frequency += 1;
+			next->frequency += userRegions[triple.id].weight;
 			e = next;
 			next = findSuccessor(D,e);
 		}
-		
-        D = insert(D,userRegions[triple.id].yEnd,e->frequency-1);
+
+        //allagh
+		//D = insert(D,userRegions[triple.id].yEnd,e->frequency-1);
+        if(next!=NULL && next->value == userRegions[triple.id].yEnd){
+			 D = insert(D,userRegions[triple.id].yEnd,next->frequency);
+		}
+		else {
+        	D = insert(D,userRegions[triple.id].yEnd,
+                e->frequency-userRegions[triple.id].weight);
+		}
+
 	}
 	else
 	{
@@ -127,23 +138,23 @@ struct node *updateDStructure(struct node *D, struct Triple triple, Region *user
 
 		while(next != NULL && next->value < userRegions[triple.id].yEnd)
 		{
-			if(next->frequency > 0)
-				next->frequency -= 1;
+			if(next->frequency > 0) //wtf
+				next->frequency -= userRegions[triple.id].weight;
 			e = next;
 			next = findSuccessor(D,e);
 		}
-
+    /*
         if (v1 == userRegions[triple.id].yEnd)
         {
-            D = deleteNode(D,v1);
+            D = deleteNode(D,v1, userRegions[triple.id].weight);
             
         }
-        else if(next!=NULL)
+        else */if(next!=NULL)
 		{
-			D = deleteNode(D,next->value);
-		}
+			D = deleteNode(D,next->value, 0.0);
+		}//userRegions[triple.id].weight
 
-         D = deleteNode(D,v1);
+         D = deleteNode(D,v1, userRegions[triple.id].weight);
         
 	}
 	return D;
@@ -166,7 +177,6 @@ float computeNorm(int userRegionsSize, Region *userRegions)
 			struct Triple endTemp = {userRegions[j].xEnd,j,0};  // Add end of interval
 			triples[k] = endTemp;
 			k++;
-		
 	}
 	
 	qsort(triples,k,sizeof(Triple),compare);
@@ -185,7 +195,7 @@ float computeNorm(int userRegionsSize, Region *userRegions)
 	return sqrt(nsq);
 }
 
-int readData(FILE *f, int **userRegionsSize, Region ***userRegions, int *numUsers)
+int readData(FILE *f, int **userRegionsSize, Region ***userRegions, int *numUsers, bool weighted)
 {
 	char *line = NULL;
 	size_t len = 0; 
@@ -201,6 +211,7 @@ int readData(FILE *f, int **userRegionsSize, Region ***userRegions, int *numUser
 	char *token;
 	int *countUserRegions;
 	int i,j, currLength=-1;
+    float weight;
 
 
 	read = getline(&line, &len, f);
@@ -226,6 +237,11 @@ int readData(FILE *f, int **userRegionsSize, Region ***userRegions, int *numUser
 		//Skip 4 items
 		token = strtok(NULL,delim);
 		token = strtok(NULL,delim);
+        if(weighted){
+            weight = atof(token);
+        } else {
+            weight = 1.0;
+        }
 		token = strtok(NULL,delim);
 		token = strtok(NULL,delim);
 
@@ -263,6 +279,11 @@ int readData(FILE *f, int **userRegionsSize, Region ***userRegions, int *numUser
 			id++;
 		token = strtok(NULL,delim);
 		token = strtok(NULL,delim);
+        if(weighted){
+            weight = atof(token);
+        } else {
+            weight = 1.0;
+        }
 		token = strtok(NULL,delim);
 		token = strtok(NULL,delim);
 
@@ -284,6 +305,7 @@ int readData(FILE *f, int **userRegionsSize, Region ***userRegions, int *numUser
 		(*userRegions)[id][currLength].yStart = y1;
         (*userRegions)[id][currLength].xEnd = x2;
         (*userRegions)[id][currLength].yEnd = y2;
+        (*userRegions)[id][currLength].weight = weight;
         (*userRegionsSize)[id]++; 
 		prevUser = user;
 	}
@@ -305,7 +327,7 @@ void internalLoop_sweepX(Region rec, Region *pivot, int pivotStart,int pivotSize
 		float minY = max(rec.yStart,pivot[counter].yStart);
 		float maxX = min(rec.xEnd,pivot[counter].xEnd);
 		float maxY = min(rec.yEnd,pivot[counter].yEnd);
-		(*area) += (maxX - minX)*(maxY - minY);	
+		(*area) += (maxX - minX)*(maxY - minY)*rec.weight*pivot[counter].weight;	
 		counter++;	
 
 	}
@@ -326,7 +348,7 @@ void internalLoop(Region rec, Region *pivot, int pivotSize, float *area)
 		float minY = max(rec.yStart,pivot[counter].yStart);
 		float maxX = min(rec.xEnd,pivot[counter].xEnd);
 		float maxY = min(rec.yEnd,pivot[counter].yEnd);
-		(*area) += (maxX - minX)*(maxY - minY);	
+		(*area) += (maxX - minX)*(maxY - minY)*rec.weight*pivot[counter].weight;	
 		counter++;	
 
 	}
@@ -391,16 +413,18 @@ int main(int argc, char **argv)
     char c;
     int indexMethod = -1, numIterations = 0;
     bool verbose = false;
+    bool weighted = false;
 	clock_t startTime, indexingTime, totalTime;
 	double avgQueryTime, avgTopkTime;
     float *overlapAreas;
     vector<pair<float, int>> topKUsers;
 
+
     typedef RTree<ValueType, float, 2, float> MyTree;
     
     MyTree tree;
     
-    while ((c = getopt(argc, argv, "n:b:s:k:i:v")) != -1)
+    while ((c = getopt(argc, argv, "n:b:s:k:i:vw")) != -1)
     {
         switch(c)
         {
@@ -422,6 +446,9 @@ int main(int argc, char **argv)
             case 'v':
                 verbose = true;
                 break;
+            case 'w':
+                weighted = true;
+                break;
             default:
                 cout << "Invalid arguments!" << endl;
             break;
@@ -432,7 +459,7 @@ int main(int argc, char **argv)
     cout << indexMethod << "\t\t\t" << argv[optind-1] << "\t" << argv[optind] << endl;
     
     f = fopen(argv[optind-1],"r");
-	readData(f,&userRegionsSize, &userRegions, &indexedUsers);
+	readData(f,&userRegionsSize, &userRegions, &indexedUsers,weighted);
 	fclose(f);
 
 	printf("Total Indexed users = %d\n",indexedUsers);
@@ -441,7 +468,7 @@ int main(int argc, char **argv)
 	
 	f = fopen(argv[optind], "r");
 
-	readData(f, &queryRegionsSize, &queryRegions, &queryUsers);
+	readData(f, &queryRegionsSize, &queryRegions, &queryUsers,weighted);
 
 	fclose(f);
 	printf("Total Query users = %d\n\n", queryUsers);
@@ -475,8 +502,10 @@ int main(int argc, char **argv)
             for(int i = 0; i < indexedUsers; i++) {
                 for (int j = 0; j < userRegionsSize[i]; j++)
                 {
-                    Rect r = Rect(userRegions[i][j].xStart, userRegions[i][j].yStart, userRegions[i][j].xEnd, userRegions[i][j].yEnd);
-                    tree.Insert(r.min, r.max, i);
+                    Rect r = Rect(userRegions[i][j].xStart, userRegions[i][j].yStart, 
+                        userRegions[i][j].xEnd, userRegions[i][j].yEnd, 
+                        userRegions[i][j].weight);
+                    tree.Insert(r.min, r.max, r.weight, i);
                 }
             }
             indexingTime = clock() - startTime;
@@ -485,13 +514,15 @@ int main(int argc, char **argv)
             for (int i = 0; i < queryUsers; i++)
             {
                 topKUsers.clear();
-                startTime = clock();
                 overlapAreas = new float[indexedUsers]();
+                startTime = clock();
 
                 for (int j = 0; j < queryRegionsSize[i]; j++)
                 {   
-                    Rect q = Rect(queryRegions[i][j].xStart, queryRegions[i][j].yStart, queryRegions[i][j].xEnd, queryRegions[i][j].yEnd);
-                    tree.MySearchIterative(q.min, q.max, overlapAreas);
+                    Rect q = Rect(queryRegions[i][j].xStart, queryRegions[i][j].yStart, 
+                        queryRegions[i][j].xEnd, queryRegions[i][j].yEnd,
+                        queryRegions[i][j].weight);
+                    tree.MySearchIterative(q.min, q.max, q.weight, overlapAreas);
                 }
                 for (int j = 0; j < indexedUsers; j++)
                 {   
@@ -519,24 +550,27 @@ int main(int argc, char **argv)
                 cout << "TopKTime: " <<((double)topKTime)/CLOCKS_PER_SEC << endl;
             }
             totalTime = clock()-totalTime;
+            
             cout << "Total Time: "<< ((double)totalTime)/CLOCKS_PER_SEC << endl;
             cout << "UserNormTime: "<< ((double)userNormTime)/CLOCKS_PER_SEC << endl; 
             cout << "QueryNormTime: " <<((double)queryNormTime)/CLOCKS_PER_SEC << endl;
             cout << "IndexingTime: "<<((double)indexingTime)/CLOCKS_PER_SEC << endl;
             cout << "AvgQueryTime: "<< avgQueryTime/queryUsers << endl;
             cout << "AvgTopKTime: " << avgTopkTime/queryUsers << endl;
+            //tree.printTimerResults();
             cout << "---------------------------------------------------------------------" << endl<< endl;
             break;
             
         case BATCH_SEARCH:
             
             startTime = clock();
-
             for(int i = 0; i < indexedUsers; i++) {
                 for (int j = 0; j < userRegionsSize[i]; j++)
                 {
-                    Rect r = Rect(userRegions[i][j].xStart, userRegions[i][j].yStart, userRegions[i][j].xEnd, userRegions[i][j].yEnd);
-                    tree.Insert(r.min, r.max, i);
+                    Rect r = Rect(userRegions[i][j].xStart, userRegions[i][j].yStart, 
+                        userRegions[i][j].xEnd, userRegions[i][j].yEnd,
+                        userRegions[i][j].weight);
+                    tree.Insert(r.min, r.max,r.weight, i);
                 }
             }
             indexingTime = clock() - startTime;
@@ -548,8 +582,8 @@ int main(int argc, char **argv)
             {
                 overlapAreas = new float[indexedUsers]();
                 topKUsers.clear();
+                
                 startTime = clock();
-
                 minXQueryMBR = queryRegions[i][0].xStart;
                 minYQueryMBR = queryRegions[i][0].yStart;
                 maxXQueryMBR = queryRegions[i][0].xEnd;
@@ -562,10 +596,9 @@ int main(int argc, char **argv)
                     maxXQueryMBR = max(maxXQueryMBR, queryRegions[i][j].xEnd);
                     maxYQueryMBR = max(maxYQueryMBR, queryRegions[i][j].yEnd);
                 }
-
-                Rect q = Rect(minXQueryMBR, minYQueryMBR, maxXQueryMBR, maxYQueryMBR);
-                //sort(queryRegions[i],queryRegions[i]+queryRegionsSize[i],compareRegion);
                 
+                Rect q = Rect(minXQueryMBR, minYQueryMBR, maxXQueryMBR, maxYQueryMBR, 0.0);
+                sort(queryRegions[i],queryRegions[i]+queryRegionsSize[i],compareRegion);/////*******//////
                 tree.MySearchBatch(q.min, q.max, queryRegions[i], queryRegionsSize[i], overlapAreas);
                 for (int j = 0; j < indexedUsers; j++)
                 {   
@@ -599,12 +632,13 @@ int main(int argc, char **argv)
             cout << "IndexingTime: "<<((double)indexingTime)/CLOCKS_PER_SEC << endl;
             cout << "AvgQueryTime: "<< avgQueryTime/queryUsers << endl;
             cout << "AvgTopKTime: " << avgTopkTime/queryUsers << endl;
+            //tree.printTimerResults();
             cout << "---------------------------------------------------------------------" << endl<< endl;
             break;
             
         case USER_CENTRIC_SORTED:
-            
             startTime = clock();
+            int counter;
             for(int i = 0; i < indexedUsers; i++) {
         
                 float minXUserMBR, minYUserMBR;
@@ -625,8 +659,8 @@ int main(int argc, char **argv)
                     maxYUserMBR = max(maxYUserMBR, userRegions[i][j].yEnd);
                 }
 
-                Rect r = Rect(minXUserMBR, minYUserMBR, maxXUserMBR, maxYUserMBR);
-                tree.Insert(r.min, r.max,i);
+                Rect r = Rect(minXUserMBR, minYUserMBR, maxXUserMBR, maxYUserMBR,0.0);
+                tree.Insert(r.min, r.max, 0.0, i);
             }
             indexingTime = clock() - startTime;
 
@@ -635,7 +669,6 @@ int main(int argc, char **argv)
                 topKUsers.clear();
                 startTime = clock();
                 sort(queryRegions[i], queryRegions[i]+queryRegionsSize[i], compareRegion);
-
                 minXQueryMBR = queryRegions[i][0].xStart;
                 minYQueryMBR = queryRegions[i][0].yStart;
                 maxXQueryMBR = queryRegions[i][0].xEnd;
@@ -648,16 +681,26 @@ int main(int argc, char **argv)
                     maxXQueryMBR = max(maxXQueryMBR, queryRegions[i][j].xEnd);
                     maxYQueryMBR = max(maxYQueryMBR, queryRegions[i][j].yEnd);
                 }
-                Rect q = Rect(minXQueryMBR, minYQueryMBR, maxXQueryMBR, maxYQueryMBR);
+                Rect q = Rect(minXQueryMBR, minYQueryMBR, maxXQueryMBR, maxYQueryMBR, 0.0);
 
                 vector<int> hits = tree.mySearchBatch(q.min, q.max);
+                //cout<<i<<" "<<hits.size()<<endl;
                 
+                
+
                 for(int j = 0; j < hits.size(); j++)
                 {
                     int idx = hits[j];
-                    float similarity = spatialSimilarity(queryRegionsSize[i],queryRegions[i], userRegionsSize[idx], userRegions[idx],queryUsersNsq[i], indexedUsersNsq[idx], USER_CENTRIC_SORTED);
+                    float similarity = spatialSimilarity(queryRegionsSize[i],queryRegions[i], 
+                        userRegionsSize[idx], userRegions[idx],queryUsersNsq[i], indexedUsersNsq[idx], 
+                        USER_CENTRIC_SORTED);
                     topKUsers.push_back(make_pair(similarity, idx));
+                    if(i==1921 && similarity>0.0){
+                        counter++;
+                    }
                 }
+
+                
 
                 clock_t queryTime = clock() - startTime;
                 avgQueryTime+=((double)queryTime)/CLOCKS_PER_SEC;
@@ -679,6 +722,7 @@ int main(int argc, char **argv)
                 cout << "QueryTime: "<< ((double)queryTime)/CLOCKS_PER_SEC << endl;
                 cout << "TopKTime: " <<((double)topKTime)/CLOCKS_PER_SEC << endl;
             }
+            cout<<"Non zero "<<counter<<endl;
             totalTime = clock()-totalTime;
             cout << "Total Time: "<< ((double)totalTime)/CLOCKS_PER_SEC << endl;
             cout << "UserNormTime: "<< ((double)userNormTime)/CLOCKS_PER_SEC << endl; 

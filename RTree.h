@@ -37,7 +37,14 @@ typedef struct Region
 {
     float xStart, yStart;
     float xEnd, yEnd;
+    float weight;
 }Region;
+
+//temp timer definitions
+double overlapCalculationTime = 0.0;
+clock_t myStartTime;
+int calcsDone = 0;
+
 
 
 // Fwd decl
@@ -61,7 +68,7 @@ class RTFileStream;  // File I/O helper class, look below for implementation and
 ///        array similar to MFC CArray or STL Vector for returning search query result.
 ///
 template<class DATATYPE, class ELEMTYPE, int NUMDIMS,
-         class ELEMTYPEREAL = ELEMTYPE, int TMAXNODES = 64, int TMINNODES = TMAXNODES / 2>
+         class ELEMTYPEREAL = ELEMTYPE, int TMAXNODES = 32, int TMINNODES = TMAXNODES / 2>
 class RTree
 {
   static_assert(std::numeric_limits<ELEMTYPEREAL>::is_iec559, "'ELEMTYPEREAL' accepts floating-point types only");
@@ -90,7 +97,7 @@ public:
   /// \param a_min Min of bounding rect
   /// \param a_max Max of bounding rect
   /// \param a_dataId Positive Id of data.  Maybe zero, but negative numbers not allowed.
-  void Insert(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], const DATATYPE& a_dataId);
+  void Insert(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], const float weight, const DATATYPE& a_dataId);
 
   /// Remove entry
   /// \param a_min Min of bounding rect
@@ -107,9 +114,13 @@ public:
   /// \return Returns the number of entries found
   int Search(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], std::function<bool (const DATATYPE&)> callback) const;
 
+  // Used to print timer counters. Needs to be called externally after all operations are finished
+  void printTimerResults() const;
+
+
   // MySearchIterative, updates overlapCounters for each user
   // Requires simple query rect each time
-  int MySearchIterative(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], float overlapCounters[]) const;
+  int MySearchIterative(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], const float weight, float overlapCounters[]) const;
 
   // MySearchBatch, updates overlapCounters for each user
   // Requires query user with many rects
@@ -304,6 +315,7 @@ protected:
   {
     ELEMTYPE m_min[NUMDIMS];                      ///< Min dimensions of bounding box
     ELEMTYPE m_max[NUMDIMS];                      ///< Max dimensions of bounding box
+    float weight; 
   };
 
   /// May be data or may be another subtree
@@ -526,7 +538,7 @@ RTREE_QUAL::~RTree()
 
 
 RTREE_TEMPLATE
-void RTREE_QUAL::Insert(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], const DATATYPE& a_dataId)
+void RTREE_QUAL::Insert(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], const float a_weight, const DATATYPE& a_dataId)
 {
 #ifdef _DEBUG
   for(int index=0; index<NUMDIMS; ++index)
@@ -543,6 +555,7 @@ void RTREE_QUAL::Insert(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMD
   {
     branch.m_rect.m_min[axis] = a_min[axis];
     branch.m_rect.m_max[axis] = a_max[axis];
+    branch.m_rect.weight = a_weight;
   }
 
   InsertRect(branch, &m_root, 0);
@@ -597,10 +610,18 @@ int RTREE_QUAL::Search(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDI
   return foundCount;
 }
 
+RTREE_TEMPLATE
+void RTREE_QUAL::printTimerResults() const
+{
+  cout<<"overlapCalculationTime "<<overlapCalculationTime<<endl;
+  cout<<"CalcsDone "<<calcsDone<<endl;
+}
+
+
 //TODO: update so that it only takes a list of rects (query user mbrs) and returns similrity with said user
 //int MySearchIterative(struct Rect rects[]) const; why not working?
 RTREE_TEMPLATE
-int RTREE_QUAL::MySearchIterative(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], float overlapCounters[]) const
+int RTREE_QUAL::MySearchIterative(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS], const float a_weight, float overlapCounters[]) const
 {
 #ifdef _DEBUG
   for(int index=0; index<NUMDIMS; ++index)
@@ -615,6 +636,7 @@ int RTREE_QUAL::MySearchIterative(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE 
   {
     rect.m_min[axis] = a_min[axis];
     rect.m_max[axis] = a_max[axis];
+    rect.weight = a_weight;
   }
 
 
@@ -622,7 +644,6 @@ int RTREE_QUAL::MySearchIterative(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE 
 
   int foundCount = 0;
   MySearchIterative(m_root, &rect, foundCount, overlapCounters);
-
   return foundCount;
 }
 
@@ -649,7 +670,6 @@ int RTREE_QUAL::MySearchBatch(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_ma
 RTREE_TEMPLATE
 vector<int> RTREE_QUAL::mySearchBatch(const ELEMTYPE a_min[NUMDIMS], const ELEMTYPE a_max[NUMDIMS]) const{
   Rect rect;
-
   for(int axis=0; axis<NUMDIMS; ++axis)
   {
     rect.m_min[axis] = a_min[axis];
@@ -1789,12 +1809,12 @@ RTREE_TEMPLATE
 float RTREE_QUAL::calculateOverlap(Rect* a_rectA, Rect* a_rectB) const
 {
   float result = 1;
-
   for(int i=0; i < NUMDIMS; ++i)
   {
     result *= Min(a_rectA->m_max[i],a_rectB->m_max[i])-
               Max(a_rectA->m_min[i],a_rectB->m_min[i]);
   }
+  result *= a_rectA->weight*a_rectB->weight;
   return result;
 }
 
@@ -1809,7 +1829,8 @@ float RTREE_QUAL::calculateOverlap(Region* a_rectA, Rect* a_rectB) const
 
   result *= Min(a_rectA->yEnd,a_rectB->m_max[1])-
             Max(a_rectA->yStart,a_rectB->m_min[1]);
-
+  
+  result *= a_rectA->weight*a_rectB->weight;
   return result;
 }
 
@@ -1846,9 +1867,11 @@ bool RTREE_QUAL::MySearchIterative(Node* a_node, Rect* a_rect, int& a_foundCount
         ++a_foundCount;
         // calculate and update area overlap between id and user
         overlapCounters[id] += calculateOverlap(a_rect, &a_node->m_branch[index].m_rect);
+        //calcsDone+=1;
       }
     }
   }
+
 
   return true; // Continue searching
 }
@@ -1869,7 +1892,7 @@ void RTREE_QUAL::mySweepLoop(Region rec, Branch *pivot, int pivotStart,int pivot
 		float minY = max(rec.yStart,pivot[counter].m_rect.m_min[1]);
 		float maxX = min(rec.xEnd,pivot[counter].m_rect.m_max[0]);
 		float maxY = min(rec.yEnd,pivot[counter].m_rect.m_max[1]);
-    overlapCounters[pivot[counter].m_data]+=(maxX - minX)*(maxY - minY);
+    overlapCounters[pivot[counter].m_data]+=(maxX - minX)*(maxY - minY)*rec.weight*pivot[counter].m_rect.weight;
 		counter++;	
 	}
 }
@@ -1889,7 +1912,7 @@ void RTREE_QUAL::mySweepLoop(Branch rec, Region *pivot, int pivotStart,int pivot
 		float minY = max(rec.m_rect.m_min[1],pivot[counter].yStart);
 		float maxX = min(rec.m_rect.m_max[0],pivot[counter].xEnd);
 		float maxY = min(rec.m_rect.m_max[1],pivot[counter].yEnd);	
-    overlapCounters[rec.m_data]+=(maxX - minX)*(maxY - minY);
+    overlapCounters[rec.m_data]+=(maxX - minX)*(maxY - minY)*rec.m_rect.weight*pivot[counter].weight;
 		counter++;	
 	}
 }
@@ -1948,7 +1971,7 @@ bool RTREE_QUAL::MySearchBatch(Node* a_node, Rect* a_rect, Rect* a_parentRect,  
   }
   else
   {
-    /*
+    
     //OPT2: mark query indexes that overlap with leaf mbr
     //works well if queries have many rois
     int querySkimmedIndex = 0;
@@ -1975,8 +1998,8 @@ bool RTREE_QUAL::MySearchBatch(Node* a_node, Rect* a_rect, Rect* a_parentRect,  
           overlapCounters[id] += calculateOverlap(&queryRegions[querySkimmed[qindex]], &a_node->m_branch[index].m_rect);
         }
       }
-    }*/
-    
+    } 
+    /*
     for(int index=0; index < a_node->m_count; ++index) {
       //OPT1: skip rects that dont overlap with query mbr
       
@@ -1990,10 +2013,12 @@ bool RTREE_QUAL::MySearchBatch(Node* a_node, Rect* a_rect, Rect* a_parentRect,  
           DATATYPE& id = a_node->m_branch[index].m_data;
           ++a_foundCount;
           overlapCounters[id] += calculateOverlap(&queryRegions[qindex], &a_node->m_branch[index].m_rect);
+          //calcsDone+=1;
         }
       }
-    }
-    /*
+
+    }*/
+    
     if(!a_node->m_sorted){
       sort(a_node->m_branch,a_node->m_branch+a_node->m_count,
         [](const Branch & first, const Branch & second) { 
@@ -2003,17 +2028,17 @@ bool RTREE_QUAL::MySearchBatch(Node* a_node, Rect* a_rect, Rect* a_parentRect,  
     }
 
     mySweep(queryRegionsSize, queryRegions, a_node->m_count, a_node->m_branch, overlapCounters);
-    */
+    
   }
   return true; // Continue searching
 }
 
+//User centric approach, returns only hits
 RTREE_TEMPLATE 
 bool RTREE_QUAL::MySearchBatch(Node* a_node, Rect* a_rect, vector<int>& indexes) const{
   ASSERT(a_node);
   ASSERT(a_node->m_level >= 0);
   ASSERT(a_rect);
-
   if(a_node->IsInternalNode()) {
     // This is an internal node in the tree
     for(int index=0; index < a_node->m_count; ++index) {
